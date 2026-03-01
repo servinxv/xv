@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
     <title>Invitación XV años · Andrea Aylén</title>
+	<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
     <!-- Font Awesome para iconos -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -1022,7 +1023,7 @@
 
         <div class="fila-meta">
           <i class="fa-regular fa-envelope"></i>
-          <span>Número de pases: <strong id="pasesTxt" style="color:#7e57c2;">4</strong></span>
+          <strong id="pasesTxt" style="color:#7e57c2;">4</strong>
         </div>
 
         <label class="titulo-campo" for="nombreInvitado">Nombre / Familia</label>
@@ -1030,7 +1031,7 @@
           id="nombreInvitado"
           class="input-box"
           type="text"
-          value="FAM. DURAN HERNANDEZ"
+          value=""
           placeholder="Ej. FAM. PÉREZ GONZÁLEZ"
         />
 
@@ -1175,8 +1176,119 @@
 
     btnAbrir.addEventListener('click', abrirInvitacion);
 
+	/* =========================
+   INVITACIÓN DINÁMICA (Excel)
+   Lee: assets/data/invitados.xlsx
+   Usa: index.html#ID
+   ========================= */
+
+const EXCEL_URL = "assets/data/invitados.xlsx";
+
+let INV_DB = [];
+let INV_CURRENT = null;
+
+function normalizeKey(s){
+  return String(s||"").trim().toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .replace(/[^a-z0-9]+/g,"");
+}
+
+function getInviteId(){
+  return decodeURIComponent((location.hash || "").replace(/^#/, "").trim());
+}
+
+async function loadInvitados(){
+  if (INV_DB.length) return INV_DB;
+
+  const res = await fetch(EXCEL_URL, { cache: "no-store" });
+  if (!res.ok) throw new Error("No pude cargar el Excel: HTTP " + res.status);
+
+  const buf = await res.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const raw = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+  INV_DB = raw.map(r => {
+    const m = {};
+    Object.keys(r).forEach(k => m[normalizeKey(k)] = r[k]);
+
+    return {
+      id: String(m["id"] ?? m["codigo"] ?? m["clave"] ?? "").trim(),
+      nombre: String(
+        m["nombreeninvitavion"] ?? // por si escribiste "invitavion"
+        m["nombreeninvitacion"] ??
+        m["nombreenlainvitacion"] ??
+        m["nombre"] ??
+        m["nombrefamilia"] ?? ""
+      ).trim(),
+      pases: String(
+        m["numdepases"] ??
+        m["numerodepases"] ??
+        m["pases"] ??
+        m["numpases"] ?? ""
+      ).trim()
+    };
+  }).filter(x => x.id);
+
+  return INV_DB;
+}
+
+function showInviteError(msg){
+  const el = document.getElementById("invitedError");
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = "block";
+}
+
+function hideInviteError(){
+  const el = document.getElementById("invitedError");
+  if (!el) return;
+  el.style.display = "none";
+}
+
+async function refreshInviteUI(){
+  const id = getInviteId();
+
+  const nombreInvitado = document.getElementById("nombreInvitado");
+  const pasesTxt = document.getElementById("pasesTxt");
+
+  // Reset visual
+  hideInviteError();
+  INV_CURRENT = null;
+
+  // Si no hay hash, no rompemos nada: que se pueda llenar manual
+  if (!id){
+    if (pasesTxt) pasesTxt.textContent = "—";
+    return;
+  }
+
+  try{
+    const db = await loadInvitados();
+    const row = db.find(x => x.id === id);
+
+    if (!row){
+      if (pasesTxt) pasesTxt.textContent = "—";
+      showInviteError("No encontré el ID en el Excel: " + id);
+      return;
+    }
+
+    INV_CURRENT = row;
+
+    if (nombreInvitado) nombreInvitado.value = row.nombre || row.id;
+    if (pasesTxt) pasesTxt.textContent = row.pases || "—";
+
+  }catch(e){
+    showInviteError(e?.message || String(e));
+  }
+}
+
+window.addEventListener("load", refreshInviteUI);
+window.addEventListener("hashchange", refreshInviteUI);
 	// =========================
 // CONFIRMACIÓN POR WHATSAPP
+// =========================
+// =========================
+// CONFIRMACIÓN POR WHATSAPP (DINÁMICO)
 // =========================
 const WHATS_NUM = "525525006851"; // 52 + 55 2500 6851
 
@@ -1192,14 +1304,17 @@ function getAsistencia() {
 btnWhats.addEventListener("click", (e) => {
   e.preventDefault();
 
-  const nombre = (nombreInvitado.value || "").trim();
-  const pases = (pasesTxt?.textContent || "").trim() || "4";
+  const id = decodeURIComponent((location.hash || "").replace(/^#/, "").trim()) || "SIN_ID";
+  const nombre = (nombreInvitado?.value || "").trim() || (INV_CURRENT?.nombre || "Invitado");
+  const pases = (pasesTxt?.textContent || "").trim() || (INV_CURRENT?.pases || "—");
   const asistencia = getAsistencia();
 
   const msg =
-    `Hola 👋, soy *${nombre || "Invitado"}*.\n` +
-    `*${asistencia}* a los XV de Andrea Aylén.\n` +
-    `Pases: *${pases}*.\n` +
+    `Hola 👋, confirmo para los XV de Andrea Aylén.\n` +
+    `ID: ${id}\n` +
+    `Invitado: ${nombre}\n` +
+    `Pases: ${pases}\n` +
+    `Respuesta: ${asistencia}\n` +
     `¡Gracias! 💜`;
 
   const url = `https://wa.me/${WHATS_NUM}?text=${encodeURIComponent(msg)}`;
