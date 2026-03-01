@@ -69,16 +69,15 @@ const CANDIDATE_PATHS = [
    (sin index.html)
    ========================= */
 function computeInvitationBase() {
-  // ejemplo: https://usuario.github.io/repo/admin.html  -> https://usuario.github.io/repo/
-  // si admin.html está en raíz del repo, esto sirve perfecto
   const url = new URL(window.location.href);
-  // quita admin.html del pathname y deja el folder
-  url.pathname = url.pathname.replace(/admin\.html$/i, "");
+
+  // Quita el archivo final del path (admin.html / generador.html / lo-que-sea.html)
+  url.pathname = url.pathname.replace(/\/[^\/]*\.html$/i, "/");
+
   // limpia search/hash
   url.search = "";
   url.hash = "";
-  // asegura que termine en /
-  if (!url.pathname.endsWith("/")) url.pathname += "/";
+
   return url.toString();
 }
 
