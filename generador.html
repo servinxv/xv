@@ -7,7 +7,6 @@
 
 <!-- SheetJS (este sí existe) -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/blueimp-md5@2.19.0/js/md5.min.js"></script>
 <style>
   :root{--p:#b39dd8;--pd:#9575cd;--txt:#4a4a4a;--s:0 6px 22px rgba(0,0,0,0.06);}
   body{font-family:system-ui, -apple-system, "Segoe UI", Roboto, Arial; background:#f6f0ff; color:var(--txt); padding:18px;}
@@ -98,8 +97,7 @@ function normalize(s){
   return String(s||"").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g,"");
 }
 function buildInviteUrl(id){
-  const hash = md5(String(id));
-  return INVITATION_BASE + "#" + hash;
+  return INVITATION_BASE + "#" + encodeURIComponent(String(id).trim());
 }
 
 /* Try candidates */
@@ -190,7 +188,7 @@ function renderFromWorkbook(wb, usedPath){
         <td><strong>${esc(r.id)}</strong></td>
         <td>${esc(r.nombre)}</td>
         <td>${esc(r.pases)}</td>
-        <td class="url"><a href="${esc(url)}">${esc(url)}</a></td>
+        <td class="url"><a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a></td>
       </tr>`;
     }
 
