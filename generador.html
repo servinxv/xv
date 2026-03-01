@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Admin · Invitados</title>
+
+<!-- SheetJS (este sí existe) -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<style>
+  :root{--p:#b39dd8;--pd:#9575cd;--txt:#4a4a4a;--s:0 6px 22px rgba(0,0,0,0.06);}
+  body{font-family:system-ui, -apple-system, "Segoe UI", Roboto, Arial; background:#f6f0ff; color:var(--txt); padding:18px;}
+  .card{max-width:1100px;margin:0 auto;background:#fff;padding:18px;border-radius:12px;box-shadow:var(--s);}
+  h1{margin:0 0 6px;}
+  .muted{color:#6b5b7e;font-size:.95rem}
+  pre{background:#fbf8ff;padding:10px;border-radius:8px;overflow:auto}
+  .ok{color:#167c3a;font-weight:700}
+  .bad{color:#b00020;font-weight:700}
+  .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#f3e5ff;border:1px solid #e9ddff;margin-right:6px}
+  table{width:100%;border-collapse:collapse;margin-top:12px}
+  th,td{padding:8px;border-bottom:1px solid #eee;text-align:left;vertical-align:top}
+  th{background:#fbf5ff}
+  .btn{background:var(--pd);color:white;padding:8px 12px;border-radius:8px;border:0;cursor:pointer;font-weight:800}
+  .url{word-break:break-all}
+</style>
+</head>
+
+<body>
+  <div class="card">
+    <h1>Admin · Invitados</h1>
+    <div class="muted">
+      Carga automática del Excel (sin input). Genera URLs de la invitación como:
+      <span class="pill">https://tu-sitio/#ID</span>
+    </div>
+
+    <div style="margin-top:10px;">
+      <strong>Base calculada para URLs de invitación:</strong>
+      <div class="pill" id="baseHint"></div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <strong>Rutas intentadas (en orden):</strong>
+      <pre id="attemptsLog">Preparando...</pre>
+    </div>
+
+    <div style="margin-top:12px;">
+      <strong>Estado:</strong> <span id="status">Iniciando...</span>
+    </div>
+
+    <div id="out" style="margin-top:12px;"></div>
+    <div id="debug" style="margin-top:12px;"></div>
+
+    <div style="margin-top:14px">
+      <button class="btn" id="btnRetry" type="button">Reintentar</button>
+    </div>
+  </div>
+
+<script>
+/* =========================
+   CONFIG
+   ========================= */
+const CANDIDATE_PATHS = [
+  "./assets/data/invitados.xlsx"
+];
+
+/* =========================
+   BASE URL de INVITACIÓN
+   (sin index.html)
+   ========================= */
+function computeInvitationBase() {
+  // ejemplo: https://usuario.github.io/repo/admin.html  -> https://usuario.github.io/repo/
+  // si admin.html está en raíz del repo, esto sirve perfecto
+  const url = new URL(window.location.href);
+  // quita admin.html del pathname y deja el folder
+  url.pathname = url.pathname.replace(/admin\.html$/i, "");
+  // limpia search/hash
+  url.search = "";
+  url.hash = "";
+  // asegura que termine en /
+  if (!url.pathname.endsWith("/")) url.pathname += "/";
+  return url.toString();
+}
+
+const INVITATION_BASE = computeInvitationBase();
+
+/* UI helpers */
+const attemptsLog = document.getElementById("attemptsLog");
+const statusEl = document.getElementById("status");
+const out = document.getElementById("out");
+const debug = document.getElementById("debug");
+const baseHint = document.getElementById("baseHint");
+baseHint.textContent = INVITATION_BASE;
+
+/* helpers */
+function esc(s){ return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;"); }
+function logAttempt(msg){ attemptsLog.textContent += msg + "\n"; }
+function normalize(s){
+  return String(s||"").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g,"");
+}
+function buildInviteUrl(id){
+  // URL de la invitación SIN GET, usando hash
+  return INVITATION_BASE + "#" + encodeURIComponent(id);
+}
+
+/* Try candidates */
+async function tryCandidates(){
+  attemptsLog.textContent = "";
+  out.innerHTML = "";
+  debug.innerHTML = "";
+  statusEl.textContent = "Probando rutas...";
+  let lastErr = null;
+
+  for (const p of CANDIDATE_PATHS){
+    try {
+      logAttempt("> Intentando: " + p);
+      const res = await fetch(p, { cache: "no-store" });
+
+      if (!res.ok) {
+        logAttempt("  -> HTTP " + res.status + " " + res.statusText);
+        lastErr = { path: p, status: res.status, text: res.statusText };
+        continue;
+      }
+
+      const buffer = await res.arrayBuffer();
+
+      try {
+        const wb = XLSX.read(buffer, { type: "array" });
+        logAttempt("  -> OK: archivo leído, hojas: " + wb.SheetNames.join(", "));
+        statusEl.innerHTML = `<span class="ok">Éxito: cargado desde <strong>${esc(p)}</strong></span>`;
+        renderFromWorkbook(wb, p);
+        return;
+      } catch(parseErr){
+        logAttempt("  -> ERROR parseando XLSX: " + (parseErr && parseErr.message));
+        lastErr = { path: p, parseError: parseErr.message };
+        continue;
+      }
+
+    } catch(fetchErr){
+      logAttempt("  -> Fetch ERROR: " + (fetchErr && fetchErr.message));
+      lastErr = { path: p, fetchError: fetchErr.message };
+      continue;
+    }
+  }
+
+  statusEl.innerHTML = `<span class="bad">No pude cargar el Excel. Revisa ruta/archivo.</span>`;
+  debug.innerHTML = `<strong>Último error:</strong><pre>${esc(JSON.stringify(lastErr, null, 2))}</pre>`;
+}
+
+/* Render table */
+function renderFromWorkbook(wb, usedPath){
+  try {
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+    if (!raw || raw.length === 0) {
+      out.innerHTML = `<div class="bad">El Excel está vacío o la hoja no tiene filas.</div>`;
+      return;
+    }
+
+    const rows = raw.map(r => {
+      const map = {};
+      Object.keys(r).forEach(k => map[normalize(k)] = r[k]);
+      return {
+        id: String(map["id"] ?? map["codigo"] ?? map["clave"] ?? "").trim(),
+        nombre: String(map["nombre"] ?? map["nombreeninvitacion"] ?? map["nombreenlainvitacion"] ?? map["nombrefamilia"] ?? "").trim(),
+        pases: String(map["pases"] ?? map["numdepases"] ?? map["numerodepases"] ?? map["numpases"] ?? "").trim()
+      };
+    }).filter(x => x.id);
+
+    if (!rows.length) {
+      out.innerHTML = `<div class="bad">No encontré columna 'id'. Headers detectados:<pre>${esc(Object.keys(raw[0]).join(", "))}</pre></div>`;
+      return;
+    }
+
+    let html = `<div class="muted">Excel cargado desde: <strong>${esc(usedPath)}</strong></div>`;
+    html += `<table>
+      <thead>
+        <tr>
+          <th style="width:140px;">id</th>
+          <th>nombre</th>
+          <th style="width:110px;">pases</th>
+          <th>url invitación</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+    for (const r of rows){
+      const url = buildInviteUrl(r.id);
+      html += `<tr>
+        <td><strong>${esc(r.id)}</strong></td>
+        <td>${esc(r.nombre)}</td>
+        <td>${esc(r.pases)}</td>
+        <td class="url">${esc(url)}</td>
+      </tr>`;
+    }
+
+    html += `</tbody></table>`;
+    out.innerHTML = html;
+
+  } catch(e){
+    out.innerHTML = `<div class="bad">Error al renderizar tabla: ${esc(e && e.message)}</div>`;
+    debug.innerHTML = `<pre>${esc(e && e.stack)}</pre>`;
+  }
+}
+
+/* events */
+document.getElementById("btnRetry").addEventListener("click", tryCandidates);
+
+/* auto-load */
+window.addEventListener("load", () => {
+  tryCandidates();
+});
+</script>
+</body>
+</html>
