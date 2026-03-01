@@ -190,7 +190,7 @@ function renderFromWorkbook(wb, usedPath){
         <td><strong>${esc(r.id)}</strong></td>
         <td>${esc(r.nombre)}</td>
         <td>${esc(r.pases)}</td>
-        <td class="url">${esc(url)}</td>
+        <td class="url"><a href="${esc(url)}">${esc(url)}</a></td>
       </tr>`;
     }
 
